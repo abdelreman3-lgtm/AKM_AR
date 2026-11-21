@@ -50,11 +50,66 @@
       transform-origin: 255px 96px;
       animation: pulseRing 1.1s ease-in-out infinite;
     }
-    #mindar-mount a-scene {
-      width: 100% !important;
-      height: 100% !important;
-      position: absolute !important;
+    body.ar-active,
+    body.ar-active main,
+    body.ar-active #ar-viewport-section {
+      background: transparent !important;
+      background-image: none !important;
+      border-color: transparent !important;
+    }
+    body.ar-active #demo-controls-section {
+      display: none !important;
+    }
+    body.ar-active #ar-viewport-section {
+      position: fixed !important;
       inset: 0 !important;
+      height: 100vh !important;
+      height: 100dvh !important;
+      width: 100vw !important;
+      border-radius: 0 !important;
+      z-index: 10 !important;
+    }
+    body.ar-active header {
+      position: fixed !important;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 40 !important;
+      background: rgba(2, 6, 23, 0.65) !important;
+    }
+    body.ar-active #hud-card {
+      top: 76px !important;
+      z-index: 35 !important;
+    }
+    body.ar-active #hitl-card {
+      bottom: 72px !important;
+      z-index: 35 !important;
+    }
+    #mindar-mount {
+      background: transparent !important;
+    }
+    #mindar-mount a-scene {
+      width: 100vw !important;
+      height: 100vh !important;
+      height: 100dvh !important;
+      position: fixed !important;
+      inset: 0 !important;
+      z-index: 1 !important;
+    }
+    body.ar-active video {
+      position: fixed !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      height: 100dvh !important;
+      object-fit: cover !important;
+      z-index: 0 !important;
+    }
+    body.ar-active canvas.a-canvas {
+      position: fixed !important;
+      inset: 0 !important;
+      z-index: 2 !important;
+      background: transparent !important;
     }
   </style>
 </head>
@@ -97,7 +152,7 @@
   <main class="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col gap-4">
 
     <!-- AR Viewport Container -->
-    <section class="relative w-full h-[430px] sm:h-[480px] rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 grid-bg">
+    <section id="ar-viewport-section" class="relative w-full h-[430px] sm:h-[480px] rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 grid-bg">
 
       <!-- Mode 1: Interactive AR Preview (Simulation Viewport) -->
       <div id="sim-viewport" class="absolute inset-0 flex items-center justify-center">
@@ -151,7 +206,17 @@
       </div>
 
       <!-- Mode 2: Live MindAR + A-Frame Camera Container (Mounted dynamically on click) -->
-      <div id="mindar-mount" class="hidden absolute inset-0 z-10 bg-black"></div>
+      <div id="mindar-mount" class="hidden fixed inset-0 z-10"></div>
+
+      <!-- Compact Floating Bottom Bar when Live AR Camera is Active -->
+      <div id="ar-quick-bar" class="hidden fixed bottom-3 left-3 right-3 z-40 flex items-center justify-center gap-2">
+        <button id="btn-ar-fault" type="button" class="px-3.5 py-2 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-bold shadow-lg backdrop-blur">
+          افتعل عطل حرارة
+        </button>
+        <button id="btn-ar-reset" type="button" class="px-3.5 py-2 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-slate-100 border border-slate-600 text-xs font-semibold shadow-lg backdrop-blur">
+          وضع طبيعي
+        </button>
+      </div>
 
       <!-- Floating AR Spatial Telemetry HUD (Works over BOTH Simulation & Live Camera) -->
       <div id="hud-card" class="ar-hud-card absolute top-3 right-3 z-20 rounded-xl p-3 w-56 sm:w-64 transition-all">
@@ -210,7 +275,7 @@
     </section>
 
     <!-- Interactive Demo Controls & MQTT Stream -->
-    <section class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <section id="demo-controls-section" class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <!-- Demo Scenario Controls -->
       <div class="rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col justify-between gap-3">
         <div>
@@ -493,19 +558,22 @@
       }
 
       function toggleLiveMindAR() {
+        const elQuickBar = document.getElementById('ar-quick-bar');
         if (state.mode === 'sim') {
           const mindSrc = document.getElementById('inp-mind-src').value.trim() || './targets.mind';
           state.mode = 'ar';
+          document.body.classList.add('ar-active');
           elSimViewport.classList.add('hidden');
           elMindArMount.classList.remove('hidden');
+          if (elQuickBar) elQuickBar.classList.remove('hidden');
           elBtnToggleArText.textContent = 'العودة لوضع المحاكاة';
 
-          // Dynamically inject MindAR + A-Frame scene
+          // Dynamically inject MindAR + A-Frame scene with transparent renderer
           elMindArMount.innerHTML = `
             <a-scene
-              mindar-image="imageTargetSrc: ${mindSrc}; autoStart: true; uiScanning: yes;"
+              mindar-image="imageTargetSrc: ${mindSrc}; autoStart: true; uiScanning: yes; uiLoading: yes;"
               color-space="sRGB"
-              renderer="colorManagement: true, physicallyCorrectLights"
+              renderer="colorManagement: true, physicallyCorrectLights: true, alpha: true"
               vr-mode-ui="enabled: false"
               device-orientation-permission-ui="enabled: false">
               <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
@@ -519,12 +587,20 @@
               </a-entity>
             </a-scene>
           `;
-          addLog('MINDAR', `Mounted MindAR scene with target="${mindSrc}". Requires HTTPS + camera permission on mobile.`, 'text-sky-400');
-          showToast('تم تفعيل مشهد MindAR — يعمل بكاميرا الموبايل عند فتحه عبر HTTPS مع ملف targets.mind');
+          addLog('MINDAR', `Mounted transparent full-screen MindAR scene with target="${mindSrc}".`, 'text-sky-400');
+          showToast('جاري تشغيل الكاميرا — وجّه الموبايل نحو صورة الهدف');
         } else {
           state.mode = 'sim';
+          document.body.classList.remove('ar-active');
+          document.querySelectorAll('video').forEach((v) => {
+            if (v.srcObject && v.srcObject.getTracks) {
+              v.srcObject.getTracks().forEach((tr) => tr.stop());
+            }
+            v.remove();
+          });
           elMindArMount.innerHTML = '';
           elMindArMount.classList.add('hidden');
+          if (elQuickBar) elQuickBar.classList.add('hidden');
           elSimViewport.classList.remove('hidden');
           elBtnToggleArText.textContent = 'تشغيل كاميرا AR';
           addLog('MINDAR', 'Switched back to Simulation Preview Mode.', 'text-slate-400');
@@ -609,6 +685,8 @@
 
       // Bind Event Listeners
       document.getElementById('btn-toggle-ar').addEventListener('click', toggleLiveMindAR);
+      document.getElementById('btn-ar-fault').addEventListener('click', () => document.getElementById('btn-sim-fault').click());
+      document.getElementById('btn-ar-reset').addEventListener('click', () => document.getElementById('btn-sim-reset').click());
       document.getElementById('btn-approve').addEventListener('click', () => handleApproval(true));
       document.getElementById('btn-reject').addEventListener('click', () => handleApproval(false));
 
