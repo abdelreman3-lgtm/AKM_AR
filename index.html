@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Spatial Industrial MCP • Mobile WebAR</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background-color: #020617;
+      color: #f8fafc;
+      overflow-x: hidden;
+    }
+    .ar-hud-card {
+      background: rgba(15, 23, 42, 0.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      box-shadow: 0 12px 32px rgba(2, 6, 23, 0.65);
+    }
+    .ar-hud-alarm {
+      border-color: rgba(244, 63, 94, 0.75);
+      box-shadow: 0 0 28px rgba(244, 63, 94, 0.25);
+    }
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.06) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    @keyframes spinSlow {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .motor-spin {
+      transform-origin: 180px 145px;
+      animation: spinSlow 2.4s linear infinite;
+    }
+    @keyframes pulseRing {
+      0%, 100% { opacity: 0.9; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(1.08); }
+    }
+    .fault-pulse {
+      transform-origin: 255px 96px;
+      animation: pulseRing 1.1s ease-in-out infinite;
+    }
+    #mindar-mount a-scene {
+      width: 100% !important;
+      height: 100% !important;
+      position: absolute !important;
+      inset: 0 !important;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Top Navigation Bar -->
+  <header class="sticky top-0 z-30 bg-slate-950/90 backdrop-blur border-b border-slate-800 px-4 py-3">
+    <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center text-sky-400">
+          <i data-lucide="cpu" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 class="text-sm sm:text-base font-bold text-white leading-tight" dir="ltr">Spatial Industrial MCP</h1>
+          <div class="flex items-center gap-2 text-xs text-slate-400">
+            <span id="conn-dot" class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+            <span id="conn-label">وضع المحاكاة (Ready for Mobile AR)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="btn-toggle-ar" type="button" class="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-1.5 transition">
+          <i data-lucide="camera" class="w-4 h-4"></i>
+          <span id="btn-toggle-ar-text">تشغيل كاميرا AR</span>
+        </button>
+        <button id="btn-open-settings" type="button" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm flex items-center gap-1.5 border border-slate-700 transition">
+          <i data-lucide="sliders" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">إعدادات MQTT</span>
+        </button>
+        <button id="btn-open-guide" type="button" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm flex items-center gap-1.5 border border-slate-700 transition">
+          <i data-lucide="smartphone" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">التشغيل على الموبايل</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main class="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col gap-4">
+
+    <!-- AR Viewport Container -->
+    <section class="relative w-full h-[430px] sm:h-[480px] rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 grid-bg">
+
+      <!-- Mode 1: Interactive AR Preview (Simulation Viewport) -->
+      <div id="sim-viewport" class="absolute inset-0 flex items-center justify-center">
+        <!-- Stylized Industrial Control Panel + Motor Target SVG -->
+        <svg viewBox="0 0 420 280" class="w-full max-w-md h-auto opacity-95 select-none" aria-label="Industrial Motor Target">
+          <!-- Mounting Plate -->
+          <rect x="30" y="26" width="360" height="228" rx="18" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+          <!-- Target Corner Reticles (MindAR Tracking Frame) -->
+          <path d="M 48 64 L 48 44 L 68 44" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M 352 44 L 372 44 L 372 64" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M 48 216 L 48 236 L 68 236" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M 352 236 L 372 236 L 372 216" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round"/>
+
+          <!-- PLC Module Left -->
+          <rect x="58" y="66" width="70" height="146" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
+          <text x="93" y="88" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="monospace">PLC-S7</text>
+          <circle id="svg-plc-led" cx="76" cy="106" r="4.5" fill="#10b981"/>
+          <circle cx="93" cy="106" r="4.5" fill="#38bdf8"/>
+          <circle id="svg-err-led" cx="110" cy="106" r="4.5" fill="#334155"/>
+          <rect x="68" y="124" width="50" height="72" rx="4" fill="#0f172a" stroke="#334155"/>
+          <text x="93" y="155" text-anchor="middle" fill="#38bdf8" font-size="9" font-family="monospace">OPC UA</text>
+          <text x="93" y="172" text-anchor="middle" fill="#64748b" font-size="8" font-family="monospace">MODBUS</text>
+
+          <!-- Motor Housing -->
+          <rect x="148" y="92" width="136" height="106" rx="14" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+          <!-- Rotating Rotor -->
+          <g id="svg-rotor" class="motor-spin">
+            <circle cx="180" cy="145" r="28" fill="#0f172a" stroke="#38bdf8" stroke-width="2" stroke-dasharray="8 6"/>
+            <line x1="180" y1="120" x2="180" y2="170" stroke="#38bdf8" stroke-width="2"/>
+            <line x1="155" y1="145" x2="205" y2="145" stroke="#38bdf8" stroke-width="2"/>
+          </g>
+          <circle cx="180" cy="145" r="7" fill="#38bdf8"/>
+
+          <!-- Thermal Sensor Box -->
+          <rect x="235" y="76" width="40" height="36" rx="6" fill="#0f172a" stroke="#64748b" stroke-width="1.5"/>
+          <text x="255" y="98" text-anchor="middle" fill="#cbd5e1" font-size="9" font-family="monospace">PT100</text>
+
+          <!-- Dynamic Fault Indicator Ring (Hidden when normal) -->
+          <g id="svg-fault-marker" class="hidden fault-pulse">
+            <circle cx="255" cy="96" r="24" fill="none" stroke="#f43f5e" stroke-width="2.5"/>
+            <path d="M 295 62 L 273 82" stroke="#f43f5e" stroke-width="2.5" stroke-linecap="round"/>
+            <text x="335" y="58" text-anchor="middle" fill="#fb7185" font-size="11" font-weight="bold">OVERHEAT</text>
+          </g>
+
+          <!-- VFD Drive Right -->
+          <rect x="302" y="92" width="58" height="106" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
+          <rect x="310" y="106" width="42" height="24" rx="3" fill="#020617" stroke="#38bdf8" stroke-width="1"/>
+          <text id="svg-vfd-hz" x="331" y="122" text-anchor="middle" fill="#38bdf8" font-size="10" font-family="monospace">47.3Hz</text>
+          <text x="331" y="184" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">VFD-01</text>
+        </svg>
+      </div>
+
+      <!-- Mode 2: Live MindAR + A-Frame Camera Container (Mounted dynamically on click) -->
+      <div id="mindar-mount" class="hidden absolute inset-0 z-10 bg-black"></div>
+
+      <!-- Floating AR Spatial Telemetry HUD (Works over BOTH Simulation & Live Camera) -->
+      <div id="hud-card" class="ar-hud-card absolute top-3 right-3 z-20 rounded-xl p-3 w-56 sm:w-64 transition-all">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-sky-400" dir="ltr">MOTOR-01 • LIVE</span>
+          <span id="hud-status-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" dir="ltr">RUNNING</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2" dir="ltr">
+          <div class="bg-slate-950/70 rounded-lg p-2 border border-slate-800">
+            <div class="text-[10px] text-slate-400">Speed</div>
+            <div class="text-base font-bold text-white"><span id="hud-rpm">1420</span> <span class="text-[10px] text-sky-400">RPM</span></div>
+          </div>
+          <div class="bg-slate-950/70 rounded-lg p-2 border border-slate-800">
+            <div class="text-[10px] text-slate-400">Winding Temp</div>
+            <div class="text-base font-bold text-white"><span id="hud-temp">64.2</span> <span class="text-[10px] text-amber-400">°C</span></div>
+          </div>
+          <div class="bg-slate-950/70 rounded-lg p-2 border border-slate-800">
+            <div class="text-[10px] text-slate-400">Current</div>
+            <div class="text-sm font-semibold text-slate-200"><span id="hud-amp">12.4</span> <span class="text-[10px] text-slate-400">A</span></div>
+          </div>
+          <div class="bg-slate-950/70 rounded-lg p-2 border border-slate-800">
+            <div class="text-[10px] text-slate-400">Safety Gate</div>
+            <div id="hud-gate" class="text-xs font-semibold text-emerald-400 mt-0.5">ARMED</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating AI MCP Human-in-the-Loop (HITL) Approval Overlay -->
+      <div id="hitl-card" class="hidden absolute bottom-3 left-3 right-3 sm:left-auto sm:right-3 sm:w-96 z-20 rounded-xl p-3.5 bg-slate-950/92 backdrop-blur-md border border-amber-400/60 shadow-2xl">
+        <div class="flex items-start justify-between gap-2 mb-2">
+          <div class="flex items-center gap-2">
+            <span class="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+              <i data-lucide="shield-alert" class="w-4 h-4"></i>
+            </span>
+            <div>
+              <div class="text-xs font-bold text-amber-300">طلب موافقة بشرية (AI MCP Proposal)</div>
+              <div id="hitl-safety-badge" class="text-[11px] text-emerald-400" dir="ltr">Safety Gate: PASSED (600–1500 RPM)</div>
+            </div>
+          </div>
+        </div>
+        <p id="hitl-reason" class="text-xs text-slate-200 leading-relaxed mb-3">
+          تم رصد ارتفاع حرارة الملفات (92.4°C). يقترح الـ AI Agent خفض سرعة الموتور إلى 1050 RPM لتفادي الـ Thermal Trip.
+        </p>
+        <div class="flex items-center gap-2">
+          <button id="btn-approve" type="button" class="flex-1 py-2 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition">
+            <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+            موافقة وتنفيذ (Approve)
+          </button>
+          <button id="btn-reject" type="button" class="flex-1 py-2 px-3 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-semibold text-xs flex items-center justify-center gap-1.5 transition">
+            <i data-lucide="x-circle" class="w-4 h-4"></i>
+            رفض (Reject)
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Demo Controls & MQTT Stream -->
+    <section class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Demo Scenario Controls -->
+      <div class="rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-bold text-white mb-1">اختبار السيناريو لايف (Interactive Controls)</h2>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            جرّب افتعال عطل حرارة عالي عشان تشوف استجابة الـ AR HUD، ظهور سهم الإنذار، وطلب الموافقة من الـ AI MCP Server.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button id="btn-sim-fault" type="button" class="px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-semibold flex items-center gap-1.5 transition">
+            <i data-lucide="flame" class="w-4 h-4"></i>
+            افتعل عطل حرارة + اقتراح AI
+          </button>
+          <button id="btn-sim-unsafe" type="button" class="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
+            <i data-lucide="shield-ban" class="w-4 h-4"></i>
+            اختبار حظر Safety Gate
+          </button>
+          <button id="btn-sim-reset" type="button" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition">
+            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+            إعادة للوضع الطبيعي
+          </button>
+        </div>
+      </div>
+
+      <!-- Live MQTT Telemetry & Audit Log -->
+      <div class="rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white">سجل رسائل MQTT & Safety Audit</h2>
+          <button id="btn-clear-log" type="button" class="text-xs text-slate-400 hover:text-slate-200">مسح</button>
+        </div>
+        <div id="mqtt-log" class="bg-slate-950 rounded-xl border border-slate-800 p-2.5 h-28 overflow-y-auto font-mono text-[11px] space-y-1 text-slate-300" dir="ltr">
+          <div class="text-sky-400">[INIT] Spatial Industrial MCP HUD ready (Simulation Mode).</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-slate-800 border border-sky-400/40 text-xs sm:text-sm text-white shadow-xl"></div>
+
+  <!-- MQTT & MindAR Settings Modal -->
+  <div id="modal-settings" class="hidden fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-white">إعدادات الربط الحي (MQTT & MindAR)</h3>
+        <button id="btn-close-settings" type="button" class="text-slate-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs" dir="ltr">
+        <div>
+          <label class="block text-slate-400 mb-1">MQTT WebSocket Broker (WSS)</label>
+          <input id="inp-broker" type="text" value="wss://broker.emqx.io:8084/mqtt" class="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">Telemetry Topic (Subscribe)</label>
+          <input id="inp-topic-tel" type="text" value="factory/line1/motor1/telemetry" class="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">AI Proposal Topic (Subscribe)</label>
+          <input id="inp-topic-prop" type="text" value="factory/line1/motor1/ai_proposal" class="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">Approved Command Topic (Publish)</label>
+          <input id="inp-topic-cmd" type="text" value="factory/line1/motor1/approved_cmd" class="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">MindAR Target File (.mind URL)</label>
+          <input id="inp-mind-src" type="text" value="./targets.mind" class="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 pt-1">
+        <button id="btn-mqtt-connect" type="button" class="flex-1 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs transition">
+          اتصال بالـ MQTT Broker
+        </button>
+        <button id="btn-mqtt-disconnect" type="button" class="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs transition">
+          قطع الاتصال
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Setup Guide Modal -->
+  <div id="modal-guide" class="hidden fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-white">خطوات تشغيل الـ WebAR على موبايلك في 5 دقائق</h3>
+        <button id="btn-close-guide" type="button" class="text-slate-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <ol class="space-y-2.5 text-xs text-slate-300 list-decimal list-inside leading-relaxed">
+        <li>
+          <strong class="text-white">جهّز ملف الهدف (<code class="text-sky-400">targets.mind</code>):</strong>
+          صوّر لوحة التحكم (أو اطبع صورة واضحة)، وارفعها على أداة
+          <span class="text-sky-400 font-mono" dir="ltr">MindAR Image Targets Compiler</span>
+          وحمّل ملف <code class="text-sky-400">targets.mind</code> وحطه في نفس مجلد ملف الـ HTML ده.
+        </li>
+        <li>
+          <strong class="text-white">افتحه عبر HTTPS:</strong>
+          متصفحات الموبايل بتشترط HTTPS لفتح الكاميرا. ارفع الملفين على <strong>GitHub Pages</strong> مجاناً، أو شغّل سيرفر محلي واعمله نفق بـ <code class="text-sky-400" dir="ltr">ngrok http 8000</code>.
+        </li>
+        <li>
+          <strong class="text-white">اربط الـ MQTT Broker:</strong>
+          اضغط على <strong>إعدادات MQTT</strong>، واتصل بالـ Broker (الافتراضي <code class="text-sky-400" dir="ltr">wss://broker.emqx.io:8084/mqtt</code> شغال للتجربة الفورية بدون إعداد سيرفر).
+        </li>
+        <li>
+          <strong class="text-white">شغّل الكاميرا:</strong>
+          اضغط <strong>تشغيل كاميرا AR</strong> ووجّه الموبايل للصورة؛ هتظهر بطاقة القراءات 3D فوقها، وأي رسالة JSON على topic الـ <code class="text-sky-400" dir="ltr">ai_proposal</code> هتظهر فوراً بأزرار Approve / Reject.
+        </li>
+      </ol>
+
+      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] text-sky-300 overflow-x-auto" dir="ltr">
+        # Sample MQTT JSON to test from Python / MQTTX:<br/>
+        {"rpm": 1480, "temp": 92.4, "amp": 18.2, "status": "ALARM"}
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const state = {
+        mode: 'sim', // 'sim' | 'ar'
+        mqttClient: null,
+        mqttConnected: false,
+        simTimer: null,
+        telemetry: {
+          rpm: 1420,
+          targetRpm: 1420,
+          temp: 64.2,
+          amp: 12.4,
+          status: 'RUNNING',
+          faultActive: false
+        },
+        pendingProposal: null,
+        limits: { minRpm: 600, maxRpm: 1500 }
+      };
+
+      // DOM elements
+      const elRpm = document.getElementById('hud-rpm');
+      const elTemp = document.getElementById('hud-temp');
+      const elAmp = document.getElementById('hud-amp');
+      const elStatusBadge = document.getElementById('hud-status-badge');
+      const elGate = document.getElementById('hud-gate');
+      const elHudCard = document.getElementById('hud-card');
+      const elHitlCard = document.getElementById('hitl-card');
+      const elHitlReason = document.getElementById('hitl-reason');
+      const elHitlSafety = document.getElementById('hitl-safety-badge');
+      const elLog = document.getElementById('mqtt-log');
+      const elConnDot = document.getElementById('conn-dot');
+      const elConnLabel = document.getElementById('conn-label');
+      const elSimViewport = document.getElementById('sim-viewport');
+      const elMindArMount = document.getElementById('mindar-mount');
+      const elBtnToggleArText = document.getElementById('btn-toggle-ar-text');
+      const elSvgFault = document.getElementById('svg-fault-marker');
+      const elSvgErrLed = document.getElementById('svg-err-led');
+      const elSvgVfdHz = document.getElementById('svg-vfd-hz');
+      const elSvgRotor = document.getElementById('svg-rotor');
+      const elToast = document.getElementById('toast');
+
+      function showToast(msg) {
+        elToast.textContent = msg;
+        elToast.classList.remove('hidden');
+        clearTimeout(showToast._t);
+        showToast._t = setTimeout(() => elToast.classList.add('hidden'), 3200);
+      }
+
+      function addLog(tag, message, colorClass) {
+        const line = document.createElement('div');
+        const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        line.className = colorClass || 'text-slate-300';
+        line.textContent = `[${ts}] [${tag}] ${message}`;
+        elLog.prepend(line);
+        while (elLog.children.length > 30) {
+          elLog.removeChild(elLog.lastChild);
+        }
+      }
+
+      function renderTelemetry() {
+        const t = state.telemetry;
+        elRpm.textContent = Math.round(t.rpm);
+        elTemp.textContent = Number(t.temp).toFixed(1);
+        elAmp.textContent = Number(t.amp).toFixed(1);
+
+        const isAlarm = t.status === 'ALARM' || t.temp >= 85;
+        elStatusBadge.textContent = isAlarm ? 'OVERHEAT' : t.status;
+        elStatusBadge.className = isAlarm
+          ? 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/25 text-rose-300 border border-rose-500/50'
+          : 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+
+        elHudCard.classList.toggle('ar-hud-alarm', isAlarm);
+        elSvgFault.classList.toggle('hidden', !isAlarm);
+        elSvgErrLed.setAttribute('fill', isAlarm ? '#f43f5e' : '#334155');
+
+        const hz = ((t.rpm / 1500) * 50).toFixed(1);
+        elSvgVfdHz.textContent = `${hz}Hz`;
+        const spinSec = Math.max(0.6, 3600 / Math.max(200, t.rpm)).toFixed(2);
+        elSvgRotor.style.animationDuration = `${spinSec}s`;
+
+        // Sync 3D A-Frame text entities if Live MindAR camera is mounted
+        const arRpm = document.getElementById('ar-rpm-text');
+        const arTemp = document.getElementById('ar-temp-text');
+        const arStatus = document.getElementById('ar-status-text');
+        const arArrow = document.getElementById('ar-fault-arrow');
+        if (arRpm) arRpm.setAttribute('value', `RPM: ${Math.round(t.rpm)}  |  ${Number(t.amp).toFixed(1)} A`);
+        if (arTemp) arTemp.setAttribute('value', `TEMP: ${Number(t.temp).toFixed(1)} C`);
+        if (arStatus) {
+          arStatus.setAttribute('value', isAlarm ? 'STATUS: OVERHEAT ALARM' : 'STATUS: RUNNING OK');
+          arStatus.setAttribute('color', isAlarm ? '#fb7185' : '#34d399');
+        }
+        if (arArrow) arArrow.setAttribute('visible', isAlarm ? 'true' : 'false');
+      }
+
+      function evaluateSafetyGate(proposal) {
+        const rpm = Number(proposal.target_rpm);
+        if (!Number.isFinite(rpm) || rpm < state.limits.minRpm || rpm > state.limits.maxRpm) {
+          elGate.textContent = 'BLOCKED';
+          elGate.className = 'text-xs font-semibold text-rose-400 mt-0.5';
+          addLog('SAFETY-GATE', `BLOCKED unsafe AI command: target_rpm=${rpm} (allowed ${state.limits.minRpm}-${state.limits.maxRpm})`, 'text-rose-400');
+          showToast(`طبقة الأمان رفضت أمر غير آمن (${rpm} RPM) قبل وصوله للـ PLC!`);
+          return false;
+        }
+        elGate.textContent = 'PENDING HITL';
+        elGate.className = 'text-xs font-semibold text-amber-400 mt-0.5';
+        state.pendingProposal = proposal;
+        elHitlReason.textContent = proposal.reason || `يقترح الـ AI تعديل السرعة إلى ${rpm} RPM.`;
+        elHitlSafety.textContent = `Safety Gate: PASSED (${state.limits.minRpm}–${state.limits.maxRpm} RPM)`;
+        elHitlCard.classList.remove('hidden');
+        addLog('MCP-PROPOSAL', `Queued for HITL approval -> target_rpm=${rpm}`, 'text-amber-300');
+        return true;
+      }
+
+      function handleApproval(approved) {
+        if (!state.pendingProposal) return;
+        const prop = state.pendingProposal;
+        state.pendingProposal = null;
+        elHitlCard.classList.add('hidden');
+        elGate.textContent = 'ARMED';
+        elGate.className = 'text-xs font-semibold text-emerald-400 mt-0.5';
+
+        const payload = {
+          action: approved ? 'APPROVE' : 'REJECT',
+          target_rpm: prop.target_rpm,
+          timestamp: new Date().toISOString()
+        };
+
+        if (state.mqttConnected && state.mqttClient) {
+          const cmdTopic = document.getElementById('inp-topic-cmd').value.trim();
+          state.mqttClient.publish(cmdTopic, JSON.stringify(payload));
+          addLog('MQTT-PUB', `${cmdTopic} -> ${JSON.stringify(payload)}`, approved ? 'text-emerald-400' : 'text-rose-300');
+        } else {
+          addLog('HITL', approved ? `Approved target_rpm=${prop.target_rpm} (writing to PLC Sim)` : 'Operator rejected AI proposal', approved ? 'text-emerald-400' : 'text-rose-300');
+        }
+
+        if (approved) {
+          state.telemetry.targetRpm = Number(prop.target_rpm);
+          state.telemetry.faultActive = false;
+          state.telemetry.status = 'RUNNING';
+          showToast(`تم اعتماد الأمر وتخفيض السرعة إلى ${prop.target_rpm} RPM بأمان`);
+        } else {
+          showToast('تم رفض أمر الـ AI — لم يتم تعديل أي قيمة في الـ PLC');
+        }
+        renderTelemetry();
+      }
+
+      function startSimulationLoop() {
+        clearInterval(state.simTimer);
+        state.simTimer = setInterval(() => {
+          if (state.mqttConnected) return; // Live MQTT overrides sim
+          const t = state.telemetry;
+          t.rpm += (t.targetRpm - t.rpm) * 0.25 + (Math.random() - 0.5) * 6;
+          const targetTemp = t.faultActive ? 92.8 : (t.targetRpm < 1200 ? 58.5 : 64.5);
+          t.temp += (targetTemp - t.temp) * 0.18 + (Math.random() - 0.5) * 0.4;
+          t.amp = Math.max(5.0, (t.rpm / 1420) * 12.4 + (t.faultActive ? 4.8 : 0) + (Math.random() - 0.5) * 0.2);
+          renderTelemetry();
+        }, 700);
+      }
+
+      function toggleLiveMindAR() {
+        if (state.mode === 'sim') {
+          const mindSrc = document.getElementById('inp-mind-src').value.trim() || './targets.mind';
+          state.mode = 'ar';
+          elSimViewport.classList.add('hidden');
+          elMindArMount.classList.remove('hidden');
+          elBtnToggleArText.textContent = 'العودة لوضع المحاكاة';
+
+          // Dynamically inject MindAR + A-Frame scene
+          elMindArMount.innerHTML = `
+            <a-scene
+              mindar-image="imageTargetSrc: ${mindSrc}; autoStart: true; uiScanning: yes;"
+              color-space="sRGB"
+              renderer="colorManagement: true, physicallyCorrectLights"
+              vr-mode-ui="enabled: false"
+              device-orientation-permission-ui="enabled: false">
+              <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+              <a-entity mindar-image-target="targetIndex: 0">
+                <a-plane position="0 0.35 0" width="1.15" height="0.58" color="#0f172a" opacity="0.88"></a-plane>
+                <a-text value="MOTOR-01 • LIVE TELEMETRY" position="0 0.53 0.02" align="center" color="#38bdf8" width="1.7"></a-text>
+                <a-text id="ar-rpm-text" value="RPM: ${Math.round(state.telemetry.rpm)}" position="0 0.38 0.02" align="center" color="#ffffff" width="1.9"></a-text>
+                <a-text id="ar-temp-text" value="TEMP: ${state.telemetry.temp.toFixed(1)} C" position="0 0.25 0.02" align="center" color="#fbbf24" width="1.9"></a-text>
+                <a-text id="ar-status-text" value="STATUS: RUNNING OK" position="0 0.13 0.02" align="center" color="#34d399" width="1.7"></a-text>
+                <a-cone id="ar-fault-arrow" visible="false" position="0.45 -0.15 0.1" rotation="0 0 180" radius-bottom="0.08" height="0.22" color="#f43f5e"></a-cone>
+              </a-entity>
+            </a-scene>
+          `;
+          addLog('MINDAR', `Mounted MindAR scene with target="${mindSrc}". Requires HTTPS + camera permission on mobile.`, 'text-sky-400');
+          showToast('تم تفعيل مشهد MindAR — يعمل بكاميرا الموبايل عند فتحه عبر HTTPS مع ملف targets.mind');
+        } else {
+          state.mode = 'sim';
+          elMindArMount.innerHTML = '';
+          elMindArMount.classList.add('hidden');
+          elSimViewport.classList.remove('hidden');
+          elBtnToggleArText.textContent = 'تشغيل كاميرا AR';
+          addLog('MINDAR', 'Switched back to Simulation Preview Mode.', 'text-slate-400');
+        }
+      }
+
+      function connectMqtt() {
+        const brokerUrl = document.getElementById('inp-broker').value.trim();
+        const telTopic = document.getElementById('inp-topic-tel').value.trim();
+        const propTopic = document.getElementById('inp-topic-prop').value.trim();
+
+        if (!brokerUrl.startsWith('wss://')) {
+          showToast('يجب استخدام رابط آمن يبدأ بـ wss:// للاتصال من المتصفح');
+          return;
+        }
+        if (typeof window.mqtt === 'undefined') {
+          showToast('مكتبة MQTT.js غير محملة حالياً');
+          return;
+        }
+
+        try {
+          if (state.mqttClient) state.mqttClient.end(true);
+          addLog('MQTT', `Connecting to ${brokerUrl}...`, 'text-sky-400');
+          const client = window.mqtt.connect(brokerUrl, {
+            clientId: 'webar_mcp_' + Math.random().toString(16).slice(2, 8),
+            connectTimeout: 5000,
+            reconnectPeriod: 0
+          });
+          state.mqttClient = client;
+
+          client.on('connect', () => {
+            state.mqttConnected = true;
+            elConnDot.className = 'w-2 h-2 rounded-full bg-sky-400 inline-block';
+            elConnLabel.textContent = 'متصل بـ MQTT Live';
+            client.subscribe([telTopic, propTopic]);
+            addLog('MQTT', `Connected & subscribed to ${telTopic}, ${propTopic}`, 'text-emerald-400');
+            showToast('تم الاتصال بالـ MQTT Broker بنجاح!');
+            document.getElementById('modal-settings').classList.add('hidden');
+          });
+
+          client.on('message', (topic, payload) => {
+            try {
+              const data = JSON.parse(payload.toString());
+              if (topic === telTopic) {
+                if (typeof data.rpm === 'number') state.telemetry.rpm = data.rpm;
+                if (typeof data.temp === 'number') state.telemetry.temp = data.temp;
+                if (typeof data.amp === 'number') state.telemetry.amp = data.amp;
+                if (data.status) state.telemetry.status = data.status;
+                renderTelemetry();
+              } else if (topic === propTopic) {
+                evaluateSafetyGate(data);
+              }
+            } catch (err) {
+              addLog('MQTT-ERR', 'Invalid JSON payload received', 'text-rose-400');
+            }
+          });
+
+          client.on('error', () => {
+            state.mqttConnected = false;
+            elConnDot.className = 'w-2 h-2 rounded-full bg-amber-400 inline-block';
+            elConnLabel.textContent = 'وضع المحاكاة (تعذر الاتصال بالـ Broker)';
+            addLog('MQTT-ERR', 'Connection failed — staying in Simulation Mode.', 'text-rose-400');
+            showToast('تعذر الاتصال بالـ Broker من هذه البيئة — جربه مباشرة من متصفح الموبايل');
+          });
+        } catch (e) {
+          addLog('MQTT-ERR', 'Broker connection blocked in preview.', 'text-rose-400');
+          showToast('تعذر فتح اتصال MQTT من المعاينة');
+        }
+      }
+
+      function disconnectMqtt() {
+        if (state.mqttClient) {
+          state.mqttClient.end(true);
+          state.mqttClient = null;
+        }
+        state.mqttConnected = false;
+        elConnDot.className = 'w-2 h-2 rounded-full bg-emerald-400 inline-block';
+        elConnLabel.textContent = 'وضع المحاكاة (Ready for Mobile AR)';
+        addLog('MQTT', 'Disconnected. Resumed local PLC simulation.', 'text-slate-400');
+        showToast('تم قطع اتصال MQTT والعودة للمحاكاة');
+      }
+
+      // Bind Event Listeners
+      document.getElementById('btn-toggle-ar').addEventListener('click', toggleLiveMindAR);
+      document.getElementById('btn-approve').addEventListener('click', () => handleApproval(true));
+      document.getElementById('btn-reject').addEventListener('click', () => handleApproval(false));
+
+      document.getElementById('btn-sim-fault').addEventListener('click', () => {
+        state.telemetry.faultActive = true;
+        state.telemetry.status = 'ALARM';
+        state.telemetry.temp = 92.4;
+        state.telemetry.rpm = 1480;
+        renderTelemetry();
+        evaluateSafetyGate({
+          target_rpm: 1050,
+          reason: 'ارتفاع حرارة حساس PT100 إلى 92.4°C. يقترح الـ AI MCP Agent خفض السرعة إلى 1050 RPM لتبريد الملفات بدون إيقاف الخط.'
+        });
+      });
+
+      document.getElementById('btn-sim-unsafe').addEventListener('click', () => {
+        evaluateSafetyGate({
+          target_rpm: 2400,
+          reason: 'محاولة أمر خاطئ من الـ LLM لرفع السرعة إلى 2400 RPM (أعلى من الحد المسموح).'
+        });
+      });
+
+      document.getElementById('btn-sim-reset').addEventListener('click', () => {
+        state.telemetry.faultActive = false;
+        state.telemetry.status = 'RUNNING';
+        state.telemetry.targetRpm = 1420;
+        state.telemetry.temp = 64.2;
+        state.pendingProposal = null;
+        elHitlCard.classList.add('hidden');
+        elGate.textContent = 'ARMED';
+        elGate.className = 'text-xs font-semibold text-emerald-400 mt-0.5';
+        renderTelemetry();
+        addLog('SIM', 'Reset motor telemetry to nominal state.', 'text-sky-400');
+      });
+
+      document.getElementById('btn-clear-log').addEventListener('click', () => {
+        elLog.innerHTML = '';
+      });
+
+      document.getElementById('btn-open-settings').addEventListener('click', () => {
+        document.getElementById('modal-settings').classList.remove('hidden');
+      });
+      document.getElementById('btn-close-settings').addEventListener('click', () => {
+        document.getElementById('modal-settings').classList.add('hidden');
+      });
+      document.getElementById('btn-open-guide').addEventListener('click', () => {
+        document.getElementById('modal-guide').classList.remove('hidden');
+      });
+      document.getElementById('btn-close-guide').addEventListener('click', () => {
+        document.getElementById('modal-guide').classList.add('hidden');
+      });
+      document.getElementById('btn-mqtt-connect').addEventListener('click', connectMqtt);
+      document.getElementById('btn-mqtt-disconnect').addEventListener('click', disconnectMqtt);
+
+      // Initialize icons & simulation loop
+      if (window.lucide) window.lucide.createIcons();
+      renderTelemetry();
+      startSimulationLoop();
+    })();
+  </script>
+</body>
+</html>
