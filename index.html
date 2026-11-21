@@ -78,8 +78,11 @@
       background: rgba(2, 6, 23, 0.65) !important;
     }
     body.ar-active #hud-card {
-      top: 76px !important;
+      top: 116px !important;
       z-index: 35 !important;
+    }
+    html.ar-active-html {
+      background: transparent !important;
     }
     body.ar-active #hitl-card {
       bottom: 72px !important;
@@ -206,7 +209,25 @@
       </div>
 
       <!-- Mode 2: Live MindAR + A-Frame Camera Container (Mounted dynamically on click) -->
-      <div id="mindar-mount" class="hidden fixed inset-0 z-10"></div>
+      <div id="mindar-mount" class="fixed inset-0 z-10 opacity-0 pointer-events-none">
+        <a-scene
+          id="mindar-scene"
+          mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiScanning: yes; uiLoading: yes;"
+          color-space="sRGB"
+          renderer="colorManagement: true, physicallyCorrectLights: true, alpha: true"
+          vr-mode-ui="enabled: false"
+          device-orientation-permission-ui="enabled: false">
+          <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+          <a-entity id="mindar-target" mindar-image-target="targetIndex: 0">
+            <a-plane position="0 0.35 0" width="1.15" height="0.58" color="#0f172a" opacity="0.88"></a-plane>
+            <a-text value="MOTOR-01 • LIVE TELEMETRY" position="0 0.53 0.02" align="center" color="#38bdf8" width="1.7"></a-text>
+            <a-text id="ar-rpm-text" value="RPM: 1420" position="0 0.38 0.02" align="center" color="#ffffff" width="1.9"></a-text>
+            <a-text id="ar-temp-text" value="TEMP: 64.2 C" position="0 0.25 0.02" align="center" color="#fbbf24" width="1.9"></a-text>
+            <a-text id="ar-status-text" value="STATUS: RUNNING OK" position="0 0.13 0.02" align="center" color="#34d399" width="1.7"></a-text>
+            <a-cone id="ar-fault-arrow" visible="false" position="0.45 -0.15 0.1" rotation="0 0 180" radius-bottom="0.08" height="0.22" color="#f43f5e"></a-cone>
+          </a-entity>
+        </a-scene>
+      </div>
 
       <!-- Compact Floating Bottom Bar when Live AR Camera is Active -->
       <div id="ar-quick-bar" class="hidden fixed bottom-3 left-3 right-3 z-40 flex items-center justify-center gap-2">
@@ -557,53 +578,67 @@
         }, 700);
       }
 
-      function toggleLiveMindAR() {
+      const sceneEl = document.getElementById('mindar-scene');
+      if (sceneEl) {
+        sceneEl.addEventListener('arReady', () => {
+          addLog('MINDAR', 'Camera & MindAR tracking ready!', 'text-emerald-400');
+          showToast('الكاميرا شغالة! وجّه الموبايل نحو صورة الهدف');
+        });
+        sceneEl.addEventListener('arError', () => {
+          addLog('MINDAR-ERR', 'Camera or targets.mind failed to initialize.', 'text-rose-400');
+          showToast('تعذر فتح الكاميرا — افتح الرابط في Chrome مباشرة وتأكد من وجود targets.mind');
+        });
+      }
+
+      async function toggleLiveMindAR() {
         const elQuickBar = document.getElementById('ar-quick-bar');
+        const arSystem = sceneEl && sceneEl.systems && sceneEl.systems['mindar-image-system'];
+
         if (state.mode === 'sim') {
-          const mindSrc = document.getElementById('inp-mind-src').value.trim() || './targets.mind';
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showToast('المتصفح ده مش بيدعم الكاميرا — اضغط الـ 3 نقط فوق واختار Open in Chrome');
+            addLog('MINDAR-ERR', 'navigator.mediaDevices unavailable in this browser.', 'text-rose-400');
+            return;
+          }
+
           state.mode = 'ar';
+          document.documentElement.classList.add('ar-active-html');
           document.body.classList.add('ar-active');
           elSimViewport.classList.add('hidden');
-          elMindArMount.classList.remove('hidden');
+          elMindArMount.classList.remove('opacity-0', 'pointer-events-none');
           if (elQuickBar) elQuickBar.classList.remove('hidden');
           elBtnToggleArText.textContent = 'العودة لوضع المحاكاة';
 
-          // Dynamically inject MindAR + A-Frame scene with transparent renderer
-          elMindArMount.innerHTML = `
-            <a-scene
-              mindar-image="imageTargetSrc: ${mindSrc}; autoStart: true; uiScanning: yes; uiLoading: yes;"
-              color-space="sRGB"
-              renderer="colorManagement: true, physicallyCorrectLights: true, alpha: true"
-              vr-mode-ui="enabled: false"
-              device-orientation-permission-ui="enabled: false">
-              <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-              <a-entity mindar-image-target="targetIndex: 0">
-                <a-plane position="0 0.35 0" width="1.15" height="0.58" color="#0f172a" opacity="0.88"></a-plane>
-                <a-text value="MOTOR-01 • LIVE TELEMETRY" position="0 0.53 0.02" align="center" color="#38bdf8" width="1.7"></a-text>
-                <a-text id="ar-rpm-text" value="RPM: ${Math.round(state.telemetry.rpm)}" position="0 0.38 0.02" align="center" color="#ffffff" width="1.9"></a-text>
-                <a-text id="ar-temp-text" value="TEMP: ${state.telemetry.temp.toFixed(1)} C" position="0 0.25 0.02" align="center" color="#fbbf24" width="1.9"></a-text>
-                <a-text id="ar-status-text" value="STATUS: RUNNING OK" position="0 0.13 0.02" align="center" color="#34d399" width="1.7"></a-text>
-                <a-cone id="ar-fault-arrow" visible="false" position="0.45 -0.15 0.1" rotation="0 0 180" radius-bottom="0.08" height="0.22" color="#f43f5e"></a-cone>
-              </a-entity>
-            </a-scene>
-          `;
-          addLog('MINDAR', `Mounted transparent full-screen MindAR scene with target="${mindSrc}".`, 'text-sky-400');
-          showToast('جاري تشغيل الكاميرا — وجّه الموبايل نحو صورة الهدف');
+          try {
+            const mindSrc = document.getElementById('inp-mind-src').value.trim() || './targets.mind';
+            if (sceneEl && mindSrc !== './targets.mind') {
+              sceneEl.setAttribute('mindar-image', `imageTargetSrc: ${mindSrc}; autoStart: false; uiScanning: yes; uiLoading: yes;`);
+            }
+            window.dispatchEvent(new Event('resize'));
+            if (arSystem && typeof arSystem.start === 'function') {
+              showToast('جاري تشغيل كاميرا الـ AR... وافق على إذن الكاميرا');
+              await arSystem.start();
+              addLog('MINDAR', 'Started mindar-image-system successfully.', 'text-sky-400');
+            } else {
+              showToast('انتظر ثانية لتحميل مكتبة MindAR ثم حاول مرة أخرى');
+              addLog('MINDAR-ERR', 'mindar-image-system not ready yet.', 'text-amber-400');
+            }
+          } catch (err) {
+            addLog('MINDAR-ERR', `Start error: ${err && err.message ? err.message : err}`, 'text-rose-400');
+            showToast('فشل تشغيل الكاميرا — تأكد من فتح الرابط في Chrome والسماح للكاميرا');
+          }
         } else {
           state.mode = 'sim';
+          try {
+            if (arSystem && typeof arSystem.stop === 'function') arSystem.stop();
+          } catch (e) {}
+          document.documentElement.classList.remove('ar-active-html');
           document.body.classList.remove('ar-active');
-          document.querySelectorAll('video').forEach((v) => {
-            if (v.srcObject && v.srcObject.getTracks) {
-              v.srcObject.getTracks().forEach((tr) => tr.stop());
-            }
-            v.remove();
-          });
-          elMindArMount.innerHTML = '';
-          elMindArMount.classList.add('hidden');
+          elMindArMount.classList.add('opacity-0', 'pointer-events-none');
           if (elQuickBar) elQuickBar.classList.add('hidden');
           elSimViewport.classList.remove('hidden');
           elBtnToggleArText.textContent = 'تشغيل كاميرا AR';
-          addLog('MINDAR', 'Switched back to Simulation Preview Mode.', 'text-slate-400');
+          addLog('MINDAR', 'Stopped MindAR and returned to Simulation Mode.', 'text-slate-400');
         }
       }
 
